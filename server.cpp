@@ -18,7 +18,7 @@ static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
 }
 
-static void do_something(int connfd) { 
+static void do_something(int connfd) { //This function handles the accepted connection represented by the file descriptor connfd.
     char rbuf[64] = {};
     ssize_t n = read(connfd, rbuf, sizeof(rbuf) - 1);
     if (n < 0) {
@@ -81,5 +81,5 @@ while(true){
     do_something(connfd); //This line calls a function do_something() to handle the accepted connection.
     close(connfd); //This line closes the accepted connection using the close() function, releasing the resources associated with it.
 }
-
+return 0;
 }
