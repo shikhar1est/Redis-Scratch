@@ -19,8 +19,9 @@ static void msg(const char *msg) {
 }
 
 static void do_something(int connfd) { //This function handles the accepted connection represented by the file descriptor connfd.
-    char rbuf[64] = {};
-    ssize_t n = read(connfd, rbuf, sizeof(rbuf) - 1);
+    char rbuf[64] = {}; //A buffer rbuf of size 64 bytes is declared and initialized to zero. This buffer will be used to store data read from the client.
+    ssize_t n = read(connfd, rbuf, sizeof(rbuf) - 1); //read() function is called to read data from the accepted connection (connfd) into the rbuf buffer. 
+    //The size of the buffer is specified as sizeof(rbuf) - 1 to leave space for a null terminator. read() returns the number of bytes read, or -1 if an error occurs. The result is stored in the variable n.
     if (n < 0) {
         msg("read() error");
         return;
@@ -79,7 +80,7 @@ while(true){
         //simply continues to the next iteration of the loop, allowing the server to keep running and accepting new connections.
     }
     do_something(connfd); //This line calls a function do_something() to handle the accepted connection.
-    close(connfd); //This line closes the accepted connection using the close() function, releasing the resources associated with it.
+    close(connfd); //This line closes the accepted connection using the close() function, releasing the resources associated with it
 }
 return 0;
 }
