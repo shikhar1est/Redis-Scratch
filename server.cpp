@@ -1,5 +1,6 @@
 #include <sys/socket.h> //This header file contains definitions of structures needed for sockets, e.g. sockaddr
 #include <stdint.h>
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -18,6 +19,71 @@ static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
 }
 
+const size_t MAX_REQUEST_SIZE = 4096;
+
+static int32_t read_all(int fd,char *buf,size_t size){ //This function reads data from a file descriptor (fd) into a buffer (buf) until the specified size (size) is reached. It returns 0 on success and -1 on failure.
+    while(size>0){
+        ssize_t rv=read(fd,buf,size);
+        if(rv<=0){
+            return -1;
+        }
+        assert((size_t)rv<=size); //asseert() is used to check that the number of bytes read (rv) is less than or equal to the
+        // remaining size to be read (size). If this condition is false, the program will terminate with an assertion failure.
+        size-=(ssize_t)rv;
+        buf+=rv;
+    }
+    return 0;
+}
+
+static int32_t write_all(int fd,char *buf,size_t size){
+    while(size>0){
+        ssize_t rv=write(fd,buf,size);
+        if(rv<=0){
+            return -1;
+        }
+        assert((size_t)rv<=size);
+        size-=(ssize_t)rv;
+        buf+=rv;
+    }
+    return 0;
+}
+
+static int32_t one_request(int connfd) {
+    // 4 bytes header
+    char rbuf[4 + MAX_REQUEST_SIZE];
+    errno = 0;
+    int32_t err = read_all(connfd, rbuf, 4);
+    if (err) {
+        msg(errno == 0 ? "EOF" : "read() error");
+        return err;
+    }
+
+    uint32_t len = 0;
+    memcpy(&len, rbuf, 4);  // memcpy() is used to copy the first 4 bytes from the rbuf buffer into the len variable.
+    // This is done to extract the length of the request body from the received data.
+    if (len > MAX_REQUEST_SIZE) {
+        msg("too long");
+        return -1;
+    }
+
+    // request body
+    err = read_all(connfd, &rbuf[4], len);
+    if (err) {
+        msg("read() error");
+        return err;
+    }
+
+    // do something
+    fprintf(stderr, "client says: %.*s\n", len, &rbuf[4]);
+
+    // reply using the same protocol
+    const char reply[] = "world";
+    char wbuf[4 + sizeof(reply)];
+    len = (uint32_t)strlen(reply);
+    memcpy(wbuf, &len, 4);
+    memcpy(&wbuf[4], reply, len);
+    return write_all(connfd, wbuf, 4 + len);
+}
 static void do_something(int connfd) { //This function handles the accepted connection represented by the file descriptor connfd.
     char rbuf[64] = {}; //A buffer rbuf of size 64 bytes is declared and initialized to zero. This buffer will be used to store data read from the client.
     ssize_t n = read(connfd, rbuf, sizeof(rbuf) - 1); //read() function is called to read data from the accepted connection (connfd) into the rbuf buffer. 
