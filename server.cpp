@@ -32,6 +32,8 @@ static void do_something(int connfd) { //This function handles the accepted conn
     write(connfd, wbuf, strlen(wbuf));
 }
 
+
+
 int main(){
 
     //CREATING A SOCKET
@@ -71,16 +73,21 @@ if(rv){
 
 //ACCEPT CONNECTIONS
 while(true){
-    struct sockaddr_in client_addr={}; //This line declares a variable client_addr of type struct sockaddr_in to store the address information of the incoming client connection.
-    socklen_t client_addr_len=sizeof(client_addr); //This line declares a variable client_addr_len of type socklen_t and initializes it to the size of the client_addr structure.
-    //socklen_t is a data type used to store the size of a socket address structure (such as struct sockaddr_in).
-    int connfd=accept(fd,(struct sockaddr*)&client_addr,&client_addr_len); //This line accepts an incoming connection using the accept() function.
+    struct sockaddr_in caddr={};
+    socklen_t caddrlen=sizeof(caddr);
+    int connfd=accept(fd,(struct sockaddr*)&caddr,&caddrlen); 
     if(connfd<0){
-        continue; //If the accept() call fails, it returns -1 and sets errno to indicate the error. In this case, the code 
-        //simply continues to the next iteration of the loop, allowing the server to keep running and accepting new connections.
+        die("accept failed");
     }
-    do_something(connfd); //This line calls a function do_something() to handle the accepted connection.
-    close(connfd); //This line closes the accepted connection using the close() function, releasing the resources associated with it
+    while(true){
+        int32_t err=one_request(connfd);
+        if(err){
+            break;
+        }
+    }
+    close(connfd);
 }
+
+
 return 0;
 }
