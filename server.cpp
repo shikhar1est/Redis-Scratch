@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netinet/ip.h>
+#include <stdbool.h>
 
 static void die(const char *msg) {
     int err = errno;
