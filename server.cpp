@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <vector>
 #include <fcntl.h>
+#include <poll.h>
 using namespace std;
 
 static void msg(const char *msg) {
@@ -188,6 +189,70 @@ static int32_t one_request(int connfd) {
     memcpy(&wbuf[4], reply, len);
     return write_all(connfd, wbuf, 4 + len);
 }
+
+//This function handles the writing of data from the outgoing buffer of a connection represented by the Conn structure.
+static void handle_write(Conn *conn) {
+    assert(conn->outgoing.size() > 0);
+    ssize_t rv = write(conn->fd, &conn->outgoing[0], conn->outgoing.size());
+    if (rv < 0 && errno == EAGAIN) {
+        return; // actually not ready
+    }
+    if (rv < 0) {
+        msg_errno("write() error");
+        conn->want_close = true;    // error handling
+        return;
+    }
+
+    // remove written data from `outgoing`
+    buf_consume(conn->outgoing, (size_t)rv);
+
+    // update the readiness intention
+    if (conn->outgoing.size() == 0) {   // all data written
+        conn->want_read = true;
+        conn->want_write = false;
+    } // else: want write
+}
+
+//This function handles the reading of data from a connection represented by the Conn structure.
+static void handle_read(Conn *conn) {
+    // read some data
+    uint8_t buf[64 * 1024];
+    ssize_t rv = read(conn->fd, buf, sizeof(buf));
+    if (rv < 0 && errno == EAGAIN) {
+        return; // actually not ready
+    }
+    // handle IO error
+    if (rv < 0) {
+        msg_errno("read() error");
+        conn->want_close = true;
+        return; // want close
+    }
+    // handle EOF
+    if (rv == 0) {
+        if (conn->incoming.size() == 0) {
+            msg("client closed");
+        } else {
+            msg("unexpected EOF");
+        }
+        conn->want_close = true;
+        return; // want close
+    }
+    // got some new data
+    buf_append(conn->incoming, buf, (size_t)rv);
+
+    // parse requests and generate responses
+    while (try_one_request(conn)) {}
+    // Q: Why calling this in a loop? See the explanation of "pipelining".
+
+    // update the readiness intention
+    if (conn->outgoing.size() > 0) {    // has a response
+        conn->want_read = false;
+        conn->want_write = true;
+        // The socket is likely ready to write in a request-response protocol,
+        // try to write it without waiting for the next iteration.
+        return handle_write(conn);
+    }   // else: want read
+}
 static void do_something(int connfd) { //This function handles the accepted connection represented by the file descriptor connfd.
     char rbuf[64] = {}; //A buffer rbuf of size 64 bytes is declared and initialized to zero. This buffer will be used to store data read from the client.
     ssize_t n = read(connfd, rbuf, sizeof(rbuf) - 1); //read() function is called to read data from the accepted connection (connfd) into the rbuf buffer. 
@@ -234,6 +299,8 @@ if(rv<0){
     die("bind failed");
 }
 
+fd_set_nb(fd); //making the listening socket non-blocking using the fd_set_nb() function defined earlier.
+
 //LISTEN
 rv=listen(fd,SOMAXCONN); //This line puts the socket into listening mode using the listen() function.
 // The second argument SOMAXCONN specifies the maximum number of pending connections that can be queued
@@ -241,23 +308,78 @@ if(rv){
     die("listen failed");
 }
 
-//ACCEPT CONNECTIONS
-while(true){
-    struct sockaddr_in caddr={};
-    socklen_t caddrlen=sizeof(caddr);
-    int connfd=accept(fd,(struct sockaddr*)&caddr,&caddrlen); 
-    if(connfd<0){
-        die("accept failed");
-    }
-    while(true){
-        int32_t err=one_request(connfd);
-        if(err){
-            break;
+// a map of all client connections, keyed by fd
+    std::vector<Conn *> fd2conn;
+    // the event loop
+    std::vector<struct pollfd> poll_args;
+    while (true) {
+        // prepare the arguments of the poll()
+        poll_args.clear();
+        // put the listening sockets in the first position
+        struct pollfd pfd = {fd, POLLIN, 0};
+        poll_args.push_back(pfd);
+        // the rest are connection sockets
+        for (Conn *conn : fd2conn) {
+            if (!conn) {
+                continue;
+            }
+            // always poll() for error
+            struct pollfd pfd = {conn->fd, POLLERR, 0};
+            // poll() flags from the application's intent
+            if (conn->want_read) {
+                pfd.events |= POLLIN;
+            }
+            if (conn->want_write) {
+                pfd.events |= POLLOUT;
+            }
+            poll_args.push_back(pfd);
         }
-    }
-    close(connfd);
-}
 
+        // wait for readiness
+        int rv = poll(poll_args.data(), (nfds_t)poll_args.size(), -1);
+        if (rv < 0 && errno == EINTR) {
+            continue;   // not an error
+        }
+        if (rv < 0) {
+            die("poll");
+        }
 
-return 0;
+        // handle the listening socket
+        if (poll_args[0].revents) {
+            if (Conn *conn = handle_accept(fd)) {
+                // put it into the map
+                if (fd2conn.size() <= (size_t)conn->fd) {
+                    fd2conn.resize(conn->fd + 1);
+                }
+                assert(!fd2conn[conn->fd]);
+                fd2conn[conn->fd] = conn;
+            }
+        }
+
+        // handle connection sockets
+        for (size_t i = 1; i < poll_args.size(); ++i) { // note: skip the 1st
+            uint32_t ready = poll_args[i].revents;
+            if (ready == 0) {
+                continue;
+            }
+
+            Conn *conn = fd2conn[poll_args[i].fd];
+            if (ready & POLLIN) {
+                assert(conn->want_read);
+                handle_read(conn);  // application logic
+            }
+            if (ready & POLLOUT) {
+                assert(conn->want_write);
+                handle_write(conn); // application logic
+            }
+
+            // close the socket from socket error or application logic
+            if ((ready & POLLERR) || conn->want_close) {
+                (void)close(conn->fd);
+                fd2conn[conn->fd] = NULL;
+                delete conn;
+            }
+        }   // for each connection sockets
+    }   // the event loop
+    return 0;
 }
