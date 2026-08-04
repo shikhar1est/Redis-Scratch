@@ -141,3 +141,31 @@ L_DONE:
     close(fd);
     return 0;
 }
+
+
+//poll() is a system call that allows a program to monitor multiple file descriptors 
+//(such as sockets) for events, such as incoming data or the ability to write data.
+// It is commonly used in network programming to handle multiple connections simultaneously without blocking the program's execution.
+
+//TCP is a stream of bytes, not a stream of messages. This means that when you send data over a TCP connection, the data is sent 
+//as a continuous stream of bytes, rather than as discrete messages.
+
+
+//In the current setup(event loop 6a), we have one server and multiple clients. 
+//The server is responsible for handling incoming connections and processing requests from the clients. 
+//Each client can send multiple requests to the server, and the server will respond to each request in the order they were received. 
+//This setup allows for efficient communication between the server and multiple clients, enabling concurrent processing of requests.
+
+//Imagine a single connection between a client and a server. There's a bug inside each individual connection. 
+//The bug is that the server is not able to handle multiple requests from the client in a single connection. 
+//It asssumes 1 read event, 1 request and 1 response. This assumption fails when the client sends multiple requests in a single connection, and the server should be able 
+//to handle that.
+//The TCP mindset is not "I got one message", It's "I got a steam of bytes, let's see how many messages I can parse from it". 
+//The server should be able to handle multiple requests in a single connection, and the client should be able to send multiple 
+//requests in a single connection as well.
+//When it comes to response, the server should be able to send multiple responses in a single connection as well.
+//Multiple responses accumulate in the socket buffer, and the client should be able to read multiple responses in a single connection as well.
+
+//handle_write() is a function that is responsible for handling write events on a socket. Responsible for sending data from the server to the client. 
+//When the server has data to send, it will call handle_write() to write the data to the socket.
+//handle_read() is a function that is responsible for handling read events on a socket. Responsible for receiving data from the client to the server.
