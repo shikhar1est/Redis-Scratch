@@ -117,7 +117,7 @@ int main(){
     if(rv){
         die("connect failed");
     }
-     // multiple pipelined requests
+    // multiple pipelined requests
     std::vector<std::string> query_list = {
         "hello1", "hello2", "hello3",
         // a large message requires multiple event loop iterations
