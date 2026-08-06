@@ -35,7 +35,7 @@ static int32_t read_full(int fd, uint8_t *buf, size_t n) {
     return 0;
 }
 
-static int32_t write_all(int fd, const uint8_t *buf, size_t n) {
+static int32_t write_all(int fd, const char *buf, size_t n) {
     while (n > 0) {
         ssize_t rv = write(fd, buf, n);
         if (rv <= 0) {
@@ -56,16 +56,29 @@ buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len) {
 const size_t k_max_msg = 32<<20;  // 32MB
 
 // the `query` function was simply splited into `send_req` and `read_res`.
-static int32_t send_req(int fd, const uint8_t *text, size_t len) { //This function 
+static int32_t send_req(int fd, const std::vector<std::string> &cmd) {
+    uint32_t len = 4;
+    for (const std::string &s : cmd) {
+        len += 4 + s.size();
+    }
     if (len > k_max_msg) {
         return -1;
     }
 
-    std::vector<uint8_t> wbuf;
-    buf_append(wbuf, (const uint8_t *)&len, 4);
-    buf_append(wbuf, text, len);
-    return write_all(fd, wbuf.data(), wbuf.size());
+    char wbuf[4 + k_max_msg];
+    memcpy(&wbuf[0], &len, 4);  // assume little endian
+    uint32_t n = cmd.size();
+    memcpy(&wbuf[4], &n, 4);
+    size_t cur = 8;
+    for (const std::string &s : cmd) {
+        uint32_t p = (uint32_t)s.size();
+        memcpy(&wbuf[cur], &p, 4);
+        memcpy(&wbuf[cur + 4], s.data(), s.size());
+        cur += 4 + s.size();
+    }
+    return write_all(fd, wbuf, 4 + len);
 }
+
 
 static int32_t read_res(int fd) {
     // 4 bytes header
@@ -103,7 +116,7 @@ static int32_t read_res(int fd) {
 }
 
 
-int main(){
+int main(int argc, char **argv){ //argc and argv are parameters that allow the program to accept command-line arguments.
     int fd=socket(AF_INET,SOCK_STREAM,0);
     if(fd<0){
         die("socket failed");
@@ -117,24 +130,17 @@ int main(){
     if(rv){
         die("connect failed");
     }
-    // multiple pipelined requests
-    std::vector<std::string> query_list = {
-        "hello1", "hello2", "hello3",
-        // a large message requires multiple event loop iterations
-        std::string(k_max_msg, 'z'),
-        "hello5",
-    };
-    for (const std::string &s : query_list) {
-        int32_t err = send_req(fd, (uint8_t *)s.data(), s.size());
-        if (err) {
-            goto L_DONE;
-        }
+    std::vector<std::string> cmd;
+    for (int i = 1; i < argc; ++i) {
+        cmd.push_back(argv[i]);
     }
-    for (size_t i = 0; i < query_list.size(); ++i) {
-        int32_t err = read_res(fd);
-        if (err) {
-            goto L_DONE;
-        }
+    int32_t err = send_req(fd, cmd);
+    if (err) {
+        goto L_DONE;
+    }
+    err = read_res(fd);
+    if (err) {
+        goto L_DONE;
     }
 
 L_DONE:
